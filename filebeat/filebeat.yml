@@ -1,0 +1,56 @@
+# =====================================================================
+# Filebeat configuration
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# Modules (MariaDB logs via the built-in "mysql" module)
+# See modules.d/mysql.yml
+# ---------------------------------------------------------------------
+filebeat.config.modules:
+  path: ${path.config}/modules.d/*.yml
+  reload.enabled: false
+
+# ---------------------------------------------------------------------
+# Inputs (application logs)
+# ---------------------------------------------------------------------
+filebeat.inputs:
+  - type: filestream
+    id: my-app-logs
+    enabled: true
+    paths:
+      - /var/log/myapp/*.log
+    # Extra fields added to every app event
+    fields:
+      service_name: backend-api
+      environment: production
+    fields_under_root: true
+    # JSON logs (one object per line). Remove if your logs are plain text.
+    parsers:
+      - ndjson:
+          target: ""
+          add_error_key: true
+          overwrite_keys: true
+
+# ---------------------------------------------------------------------
+# Output: Elasticsearch
+#   Required for the mysql module's ingest pipelines to parse slow logs.
+#   Lab setup has security disabled; for production use https + credentials.
+# ---------------------------------------------------------------------
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  # username: "elastic"
+  # password: "${ES_PASSWORD}"
+
+# ---------------------------------------------------------------------
+# Kibana + dashboards + index template
+# ---------------------------------------------------------------------
+setup.kibana:
+  host: "http://kibana:5601"
+setup.dashboards.enabled: true
+setup.template.overwrite: false
+
+# ---------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------
+logging.level: info
+logging.to_stderr: true

@@ -1,0 +1,134 @@
+# =====================================================================
+# MariaDB + Filebeat (+ Elasticsearch & Kibana) log shipping stack
+#
+#   mariadb  ──writes──▶ volume mariadb-logs ──read──▶ filebeat ──▶ Elasticsearch ──▶ Kibana
+#   app      ──writes──▶ volume app-logs     ──read──▶ filebeat
+# =====================================================================
+name: mariadb-filebeat
+
+services:
+  # ---------------------------------------------------------------
+  # One-shot helper: make the shared log volume writable by the
+  # mysql user (uid/gid 999 in the official MariaDB image).
+  # ---------------------------------------------------------------
+  init-logs:
+    image: busybox:1.37
+    command: sh -c "chown -R 999:999 /var/log/mysql && chmod 755 /var/log/mysql"
+    volumes:
+      - mariadb-logs:/var/log/mysql
+    restart: "no"
+
+  # ---------------------------------------------------------------
+  # MariaDB - logs go to files (see mariadb/conf.d/50-server.cnf)
+  # ---------------------------------------------------------------
+  mariadb:
+    image: mariadb:${MARIADB_VERSION:-11.4}
+    container_name: mariadb
+    restart: unless-stopped
+    depends_on:
+      init-logs:
+        condition: service_completed_successfully
+    environment:
+      TZ: ${TZ:-Asia/Phnom_Penh}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${MARIADB_DATABASE}
+      MARIADB_USER: ${MARIADB_USER}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+    ports:
+      - "127.0.0.1:3306:3306"          # local access only
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - mariadb-logs:/var/log/mysql     # error + slow query logs
+      - ./mariadb/conf.d:/etc/mysql/conf.d:ro
+      - ./mariadb/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------
+  # Sample application - writes JSON logs to /var/log/myapp
+  # Replace this service with your real app (keep the app-logs volume).
+  # ---------------------------------------------------------------
+  app:
+    image: alpine:3.20
+    container_name: myapp
+    restart: unless-stopped
+    command: ["sh", "/app/generate-logs.sh"]
+    volumes:
+      - app-logs:/var/log/myapp
+      - ./app/generate-logs.sh:/app/generate-logs.sh:ro
+
+  # ---------------------------------------------------------------
+  # Elasticsearch (single node, security OFF - lab use only)
+  # ---------------------------------------------------------------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.17.0}
+    container_name: elasticsearch
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Phnom_Penh}
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------------
+  # Kibana
+  # ---------------------------------------------------------------
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-8.17.0}
+    container_name: kibana
+    restart: unless-stopped
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Phnom_Penh}
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+      - "127.0.0.1:5601:5601"
+
+  # ---------------------------------------------------------------
+  # Filebeat - reads log volumes read-only and ships to Elasticsearch
+  # --strict.perms=false: bind-mounted configs are not owned by root
+  # ---------------------------------------------------------------
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION:-8.17.0}
+    container_name: filebeat
+    user: root                          # needed to read log files
+    restart: unless-stopped
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      kibana:
+        condition: service_started
+      mariadb:
+        condition: service_healthy
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    environment:
+      TZ: ${TZ:-Asia/Phnom_Penh}
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./filebeat/modules.d:/usr/share/filebeat/modules.d:ro
+      - mariadb-logs:/var/log/mysql:ro
+      - app-logs:/var/log/myapp:ro
+      - filebeat-data:/usr/share/filebeat/data   # registry (read offsets)
+
+volumes:
+  mariadb-data:
+  mariadb-logs:
+  app-logs:
+  es-data:
+  filebeat-data:

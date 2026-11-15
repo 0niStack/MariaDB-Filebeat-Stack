@@ -1,0 +1,53 @@
+# =====================================================================
+# MariaDB server configuration (mounted at /etc/mysql/conf.d/)
+# Focus: logging to files so Filebeat can ship them.
+# Log directory /var/log/mysql is a shared Docker volume.
+# =====================================================================
+
+[mysqld]
+
+# ---------------------------------------------------------------------
+# General
+# ---------------------------------------------------------------------
+character-set-server = utf8mb4
+collation-server     = utf8mb4_unicode_ci
+# Cambodia has no DST, so a fixed offset is safe and matches Asia/Phnom_Penh
+default-time-zone    = '+07:00'
+
+# ---------------------------------------------------------------------
+# Error log
+#   Startup/shutdown messages, crashes, warnings.
+#   Parsed by Filebeat's mysql module (fileset: error).
+# ---------------------------------------------------------------------
+log_error    = /var/log/mysql/mariadb-error.log
+# 2 = also log aborted connections and access-denied attempts
+log_warnings = 2
+
+# ---------------------------------------------------------------------
+# Slow query log
+#   Queries slower than long_query_time seconds.
+#   Parsed by Filebeat's mysql module (fileset: slowlog).
+# ---------------------------------------------------------------------
+slow_query_log      = 1
+slow_query_log_file = /var/log/mysql/mariadb-slow.log
+long_query_time     = 2
+# Extra detail per slow query (query plan, rows examined, etc.)
+log_slow_verbosity  = query_plan
+# Uncomment to also log queries that do not use an index (can be noisy)
+# log_queries_not_using_indexes = 1
+# Uncomment to skip very small full scans when the option above is on
+# min_examined_row_limit = 1000
+
+# ---------------------------------------------------------------------
+# General query log - keep OFF in production
+#   Logs every statement; heavy on I/O and may contain sensitive data.
+#   Enable only for short debugging sessions.
+# ---------------------------------------------------------------------
+general_log      = 0
+# general_log_file = /var/log/mysql/mariadb-general.log
+
+# ---------------------------------------------------------------------
+# Connections
+# ---------------------------------------------------------------------
+max_connections   = 100
+skip_name_resolve = 1       # no reverse DNS lookups -> faster logins

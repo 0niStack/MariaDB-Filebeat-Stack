@@ -1,0 +1,9 @@
+# Filebeat mysql module (works for MariaDB logs)
+# Paths match mariadb/conf.d/50-server.cnf, mounted read-only at /var/log/mysql
+- module: mysql
+  error:
+    enabled: true
+    var.paths: ["/var/log/mysql/mariadb-error.log*"]
+  slowlog:
+    enabled: true
+    var.paths: ["/var/log/mysql/mariadb-slow.log*"]
